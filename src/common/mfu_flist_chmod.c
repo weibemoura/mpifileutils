@@ -18,6 +18,8 @@
 
 #include <libgen.h> /* dirname */
 
+#include <sys/capability.h>
+
 #include "libcircle.h"
 #include "mfu.h"
 
@@ -982,8 +984,9 @@ static int chmod_list(
                 }
 
                 /* only attempt to change group if effective user id of
-                 * the process is the owner of the item */
-                if (grname != NULL && opts->geteuid != olduid) {
+                 * the process is the owner of the item or process has
+                 * CAP_CHWON capability */
+                if (grname != NULL && opts->geteuid != olduid && !opts->capchown) {
                     /* want to change group, but effective uid is not the
                      * owner, linux prevents normal users from doing this */
                     change = 0;
@@ -1059,9 +1062,10 @@ static int chmod_list(
                     change = 0;
                 }
 
-                /* don't bother changing permissions on files we don't own */
+                /* don't bother changing permissions on files we don't own,
+                 * unless process has CAP_FOWNER capability */
                 uid_t owner = (uid_t) mfu_flist_file_get_uid(list, idx);
-                if (opts->geteuid != owner) {
+                if (opts->geteuid != owner && !opts->capfowner) {
                     /* don't attempt to change files we don't own */
                     change = 0;
                 }
@@ -1283,6 +1287,26 @@ mfu_chmod_opts_t* mfu_chmod_opts_new(void)
     /* umask to apply when setting permissions with
      * implied all in symbolic mode, like "+rX" */
     opts->umask = 0;
+
+    /* whether process is running with CAP_CHOWN, allowing
+     * changes to uid/gid of file even when effective id
+     * of the process does not match the file */
+    opts->capchown = false;
+    int cap_rc = cap_get_bound(CAP_CHOWN);
+    if (cap_rc > 0) {
+        /* process is running with CAP_CHOWN capability */
+        opts->capchown = true;
+    }
+
+    /* whether process is running with CAP_FOWNER, allowing
+     * changes to permissions of file even when effective user id
+     * of the process does not match the owner of the file */
+    opts->capfowner = false;
+    cap_rc = cap_get_bound(CAP_FOWNER);
+    if (cap_rc > 0) {
+        /* process is running with CAP_FOWNER capability */
+        opts->capfowner = true;
+    }
 
     /* avoid calling chmod/chown on all items,
      * if this is set to true, call on every item */
